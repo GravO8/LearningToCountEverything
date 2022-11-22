@@ -10,12 +10,12 @@ import matplotlib.patches as patches
 matplotlib.use('agg')
 
 
-MAPS = ['map3','map4']
-Scales = [0.9, 1.1]
-MIN_HW = 384
-MAX_HW = 1584
-IM_NORM_MEAN = [0.485, 0.456, 0.406]
-IM_NORM_STD = [0.229, 0.224, 0.225]
+MAPS            = ["map3", "map4"]
+Scales          = [0.9, 1.1]
+MIN_HW          = 384
+MAX_HW          = 1584
+IM_NORM_MEAN    = [0.485, 0.456, 0.406]
+IM_NORM_STD     = [0.229, 0.224, 0.225]
 
 
 def select_exemplar_rois(image):
@@ -41,6 +41,7 @@ def select_exemplar_rois(image):
 
     return all_rois
 
+
 def matlab_style_gauss2D(shape=(3,3),sigma=0.5):
     """
     2D gaussian mask - should give the same result as MATLAB's
@@ -54,6 +55,7 @@ def matlab_style_gauss2D(shape=(3,3),sigma=0.5):
     if sumh != 0:
         h /= sumh
     return h
+
 
 def PerturbationLoss(output,boxes,sigma=8, use_gpu=True):
     Loss = 0.
@@ -125,19 +127,22 @@ def pad_to_size(feat, desire_h, desire_w):
     return F.pad(feat, (left_pad, right_pad, top_pad, bottom_pad))
 
 
-def extract_features(feature_model, image, boxes,feat_map_keys=['map3','map4'], exemplar_scales=[0.9, 1.1]):
+def extract_features(feature_model, image, boxes, feat_map_keys = ["map3", "map4"], 
+    exemplar_scales = [0.9, 1.1]):
+    '''
+    feature_model - the feature extractor backbone - (pretrained ResNet50, by default)
+                    This model outputs its feature maps at various levels. These
+                    are here refered to as 'mapN' where larger Ns correspond to
+                    higher level feature maps with lower resolutions (hence the
+                    larger 'Scalling' used)
+    '''
     N, M = image.shape[0], boxes.shape[2]
-    """
-    Getting features for the image N * C * H * W
-    """
-    Image_features = feature_model(image)
-    """
-    Getting features for the examples (N*M) * C * h * w
-    """
-    for ix in range(0,N):
-        # boxes = boxes.squeeze(0)
-        boxes = boxes[ix][0]
-        cnter = 0
+    # N = Number of query images
+    # M = Number of support rectangles per image
+    Image_features = feature_model(image)   # cvlab: Getting features for the image N * C * H * W
+    for ix in range(0,N):                   # cvlab: Getting features for the examples (N*M) * C * h * w
+        boxes  = boxes[ix][0]
+        cnter  = 0
         Cnter1 = 0
         for keys in feat_map_keys:
             image_features = Image_features[keys][ix].unsqueeze(0)
@@ -150,11 +155,14 @@ def extract_features(feature_model, image, boxes,feat_map_keys=['map3','map4'], 
             else:
                 Scaling = 32.0
             boxes_scaled = boxes / Scaling
+            # boxes are described by their top left and bottom right points
+            # the top left coordinates are rounded down
+            # the bottom right coordinates are rounded + 1
             boxes_scaled[:, 1:3] = torch.floor(boxes_scaled[:, 1:3])
             boxes_scaled[:, 3:5] = torch.ceil(boxes_scaled[:, 3:5])
             boxes_scaled[:, 3:5] = boxes_scaled[:, 3:5] + 1 # make the end indices exclusive 
             feat_h, feat_w = image_features.shape[-2], image_features.shape[-1]
-            # make sure exemplars don't go out of bound
+            # cvlab: make sure exemplars don't go out of bound
             boxes_scaled[:, 1:3] = torch.clamp_min(boxes_scaled[:, 1:3], 0)
             boxes_scaled[:, 3] = torch.clamp_max(boxes_scaled[:, 3], feat_h)
             boxes_scaled[:, 4] = torch.clamp_max(boxes_scaled[:, 4], feat_w)            
@@ -162,21 +170,17 @@ def extract_features(feature_model, image, boxes,feat_map_keys=['map3','map4'], 
             box_ws = boxes_scaled[:, 4] - boxes_scaled[:, 2]            
             max_h = math.ceil(max(box_hs))
             max_w = math.ceil(max(box_ws))            
-            for j in range(0,M):
+            for j in range(0,M): # iterate over the boxes
                 y1, x1 = int(boxes_scaled[j,1]), int(boxes_scaled[j,2])  
                 y2, x2 = int(boxes_scaled[j,3]), int(boxes_scaled[j,4]) 
-                #print(y1,y2,x1,x2,max_h,max_w)
+                # cvlab: print(y1,y2,x1,x2,max_h,max_w)
+                features = image_features[:,:,y1:y2, x1:x2] # selects the features from the feature map
+                if (features.shape[2] != max_h) or (features.shape[3] != max_w): # when the bboxes are close to the edges, they may get clipped in which case, they should be resized (with interpolation) to the same (max_h, max_w) size
+                    features = F.interpolate(features, size = (max_h,max_w), mode = "bilinear")
                 if j == 0:
-                    examples_features = image_features[:,:,y1:y2, x1:x2]
-                    if examples_features.shape[2] != max_h or examples_features.shape[3] != max_w:
-                        #examples_features = pad_to_size(examples_features, max_h, max_w)
-                        examples_features = F.interpolate(examples_features, size=(max_h,max_w),mode='bilinear')                    
+                    examples_features = features.clone()
                 else:
-                    feat = image_features[:,:,y1:y2, x1:x2]
-                    if feat.shape[2] != max_h or feat.shape[3] != max_w:
-                        feat = F.interpolate(feat, size=(max_h,max_w),mode='bilinear')
-                        #feat = pad_to_size(feat, max_h, max_w)
-                    examples_features = torch.cat((examples_features,feat),dim=0)
+                    examples_features = torch.cat((examples_features, features),dim=0)
             """
             Convolving example features over image features
             """
@@ -186,11 +190,11 @@ def extract_features(feature_model, image, boxes,feat_map_keys=['map3','map4'], 
                     examples_features
                 )
             combined = features.permute([1,0,2,3])
-            # computing features for scales 0.9 and 1.1 
+            # cvlab: computing features for scales 0.9 and 1.1 
             for scale in exemplar_scales:
                     h1 = math.ceil(h * scale)
                     w1 = math.ceil(w * scale)
-                    if h1 < 1: # use original size if scaled size is too small
+                    if h1 < 1: # cvlab: use original size if scaled size is too small
                         h1 = h
                     if w1 < 1:
                         w1 = w
@@ -449,5 +453,3 @@ def format_for_plotting(tensor):
         return formatted.squeeze(0).detach()
     else:
         return formatted.permute(1, 2, 0).detach()
-
-
