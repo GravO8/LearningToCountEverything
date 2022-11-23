@@ -87,7 +87,7 @@ image_name = os.path.splitext(image_name)[0]
 
 rects1 = get_rects()
 print("Bounding boxes: ", end="")
-# print(rects1)
+print(rects1)
 
 image = Image.open(args.input_image)
 image.load()

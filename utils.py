@@ -135,6 +135,16 @@ def convolve_examples_over_img(img_features, ex_features, h, w):
     return features.permute([1,0,2,3])
 
 
+def resize_features(features, h, w):
+    '''
+    Resizes the features to the same (h, w) size, using interpolation
+    '''
+    assert len(features.shape) >= 4
+    if (features.shape[2] != h) or (features.shape[3] != w):
+        features = F.interpolate(features, size = (h, w), mode = "bilinear")
+    return features
+
+
 def extract_features(feature_model, image, boxes, feat_map_keys = ["map3", "map4"], 
     exemplar_scales = [0.9, 1.1]):
     '''
@@ -168,23 +178,21 @@ def extract_features(feature_model, image, boxes, feat_map_keys = ["map3", "map4
             # the bottom right coordinates are rounded + 1
             boxes_scaled[:, 1:3] = torch.floor(boxes_scaled[:, 1:3])
             boxes_scaled[:, 3:5] = torch.ceil(boxes_scaled[:, 3:5])
-            boxes_scaled[:, 3:5] = boxes_scaled[:, 3:5] + 1 # make the end indices exclusive 
-            feat_h, feat_w = image_features.shape[-2], image_features.shape[-1]
-            # cvlab: make sure exemplars don't go out of bound
-            boxes_scaled[:, 1:3] = torch.clamp_min(boxes_scaled[:, 1:3], 0)
-            boxes_scaled[:, 3] = torch.clamp_max(boxes_scaled[:, 3], feat_h)
-            boxes_scaled[:, 4] = torch.clamp_max(boxes_scaled[:, 4], feat_w)            
-            box_hs = boxes_scaled[:, 3] - boxes_scaled[:, 1]
-            box_ws = boxes_scaled[:, 4] - boxes_scaled[:, 2]            
-            max_h = math.ceil(max(box_hs))
-            max_w = math.ceil(max(box_ws))            
-            for j in range(0,M): # iterate over the boxes
+            boxes_scaled[:, 3:5] = boxes_scaled[:, 3:5] + 1                     # cvlab: make the end indices exclusive 
+            feat_h, feat_w       = image_features.shape[-2], image_features.shape[-1]
+            boxes_scaled[:, 1:3] = torch.clamp_min(boxes_scaled[:, 1:3], 0)     # cvlab: make sure exemplars don't go out of bound
+            boxes_scaled[:, 3]   = torch.clamp_max(boxes_scaled[:, 3], feat_h)
+            boxes_scaled[:, 4]   = torch.clamp_max(boxes_scaled[:, 4], feat_w)
+            box_hs               = boxes_scaled[:,3] - boxes_scaled[:,1]        # bbox heights
+            box_ws               = boxes_scaled[:,4] - boxes_scaled[:,2]        # bbox widths
+            max_h                = math.ceil(max(box_hs))                       # tallest bbox
+            max_w                = math.ceil(max(box_ws))                       # widest bbox
+            for j in range(M): # iterate over the boxes
                 y1, x1 = int(boxes_scaled[j,1]), int(boxes_scaled[j,2])  
                 y2, x2 = int(boxes_scaled[j,3]), int(boxes_scaled[j,4]) 
                 # cvlab: print(y1,y2,x1,x2,max_h,max_w)
                 features = image_features[:,:,y1:y2, x1:x2] # selects the features from the feature map
-                if (features.shape[2] != max_h) or (features.shape[3] != max_w): # when the bboxes are close to the edges, they may get clipped in which case, they should be resized (with interpolation) to the same (max_h, max_w) size
-                    features = F.interpolate(features, size = (max_h,max_w), mode = "bilinear")
+                features = resize_features(features, max_h, max_w)
                 if j == 0:
                     examples_features = features.clone()
                 else:
@@ -196,12 +204,11 @@ def extract_features(feature_model, image, boxes, feat_map_keys = ["map3", "map4
                 w1 = max(math.ceil(w * scale), 1)
                 examples_features_scaled = F.interpolate(examples_features, size = (h1, w1), mode = "bilinear")
                 features_scaled          = convolve_examples_over_img(image_features, examples_features_scaled, h1, w1)
-                combined                 = torch.cat((combined, features_scaled),dim=1)
+                combined                 = torch.cat((combined, features_scaled), dim = 1)
             if cnter == 0:
                 Combined = 1.0 * combined
             else:
-                if Combined.shape[2] != combined.shape[2] or Combined.shape[3] != combined.shape[3]:
-                    combined = F.interpolate(combined, size=(Combined.shape[2],Combined.shape[3]),mode='bilinear')
+                combined = resize_features(combined, Combined.shape[2], Combined.shape[3])
                 Combined = torch.cat((Combined,combined),dim=1)
             cnter += 1
         if ix == 0:
