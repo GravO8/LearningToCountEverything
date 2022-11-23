@@ -143,36 +143,38 @@ def resize_features(features, h, w):
     if (features.shape[2] != h) or (features.shape[3] != w):
         features = F.interpolate(features, size = (h, w), mode = "bilinear")
     return features
+    
+def get_scaling(map):
+    '''
+    The backbone outputs its feature maps at various levels. These are here 
+    refered to as 'mapN' where larger Ns correspond to higher level feature maps 
+    with lower resolutions (hence the larger scaling used)
+    '''
+    if map in ("map1", "map2"):
+        return 4.0
+    elif map == "map3":
+        return 8.0
+    elif map == "map4":
+        return 16.0
+    return 32.0
 
 
 def extract_features(feature_model, image, boxes, feat_map_keys = ["map3", "map4"], 
     exemplar_scales = [0.9, 1.1]):
     '''
     feature_model - the feature extractor backbone - (pretrained ResNet50, by default)
-                    This model outputs its feature maps at various levels. These
-                    are here refered to as 'mapN' where larger Ns correspond to
-                    higher level feature maps with lower resolutions (hence the
-                    larger 'Scalling' used)
     '''
     N, M = image.shape[0], boxes.shape[2]
     # N = Number of query images
     # M = Number of support rectangles per image
     Image_features = feature_model(image)   # cvlab: Getting features for the image N * C * H * W
     for ix in range(0,N):                   # cvlab: Getting features for the examples (N*M) * C * h * w
-        boxes  = boxes[ix][0]
-        cnter  = 0
-        Cnter1 = 0
-        for keys in feat_map_keys:
-            image_features = Image_features[keys][ix].unsqueeze(0)
-            if keys == 'map1' or keys == 'map2':
-                Scaling = 4.0
-            elif keys == 'map3':
-                Scaling = 8.0
-            elif keys == 'map4':
-                Scaling =  16.0
-            else:
-                Scaling = 32.0
-            boxes_scaled = boxes / Scaling
+        boxes = boxes[ix][0]
+        c     = 0 # feature map counter
+        for key in feat_map_keys:
+            image_features = Image_features[key][ix].unsqueeze(0)
+            scaling        = get_scaling(key)
+            boxes_scaled   = boxes / scaling
             # boxes are described by their top left and bottom right points
             # the top left coordinates are rounded down
             # the bottom right coordinates are rounded + 1
@@ -205,17 +207,17 @@ def extract_features(feature_model, image, boxes, feat_map_keys = ["map3", "map4
                 examples_features_scaled = F.interpolate(examples_features, size = (h1, w1), mode = "bilinear")
                 features_scaled          = convolve_examples_over_img(image_features, examples_features_scaled, h1, w1)
                 combined                 = torch.cat((combined, features_scaled), dim = 1)
-            if cnter == 0:
+            if c == 0:
                 Combined = 1.0 * combined
             else:
                 combined = resize_features(combined, Combined.shape[2], Combined.shape[3])
-                Combined = torch.cat((Combined,combined),dim=1)
-            cnter += 1
+                Combined = torch.cat((Combined,combined), dim = 1)
+            c += 1
         if ix == 0:
-            All_feat = 1.0 * Combined.unsqueeze(0)
+            all_features = 1.0 * Combined.unsqueeze(0)
         else:
-            All_feat = torch.cat((All_feat,Combined.unsqueeze(0)),dim=0)
-    return All_feat
+            all_features = torch.cat((all_features, Combined.unsqueeze(0)), dim = 0)
+    return all_features
 
 
 class resizeImage(object):
