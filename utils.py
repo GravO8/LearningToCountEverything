@@ -127,6 +127,14 @@ def pad_to_size(feat, desire_h, desire_w):
     return F.pad(feat, (left_pad, right_pad, top_pad, bottom_pad))
 
 
+def convolve_examples_over_img(img_features, ex_features, h, w):
+    features = F.conv2d(
+            F.pad(img_features, 
+                 ((int(w/2)), int((w-1)/2), int(h/2), int((h-1)/2))),
+            ex_features) # cvlab: Convolving example features over image features
+    return features.permute([1,0,2,3])
+
+
 def extract_features(feature_model, image, boxes, feat_map_keys = ["map3", "map4"], 
     exemplar_scales = [0.9, 1.1]):
     '''
@@ -181,26 +189,14 @@ def extract_features(feature_model, image, boxes, feat_map_keys = ["map3", "map4
                     examples_features = features.clone()
                 else:
                     examples_features = torch.cat((examples_features, features),dim=0)
-            # print(examples_features.shape)
             h, w     = examples_features.shape[2], examples_features.shape[3]
-            features = F.conv2d(
-                    F.pad(image_features, 
-                         ((int(w/2)), int((w-1)/2), int(h/2), int((h-1)/2))),
-                    examples_features) # cvlab: Convolving example features over image features
-            combined = features.permute([1,0,2,3])
-            # cvlab: computing features for scales 0.9 and 1.1 
-            for scale in exemplar_scales:
-                    h1 = math.ceil(h * scale)
-                    w1 = math.ceil(w * scale)
-                    if h1 < 1: # cvlab: use original size if scaled size is too small
-                        h1 = h
-                    if w1 < 1:
-                        w1 = w
-                    examples_features_scaled = F.interpolate(examples_features, size=(h1,w1),mode='bilinear')  
-                    features_scaled =    F.conv2d(F.pad(image_features, ((int(w1/2)), int((w1-1)/2), int(h1/2), int((h1-1)/2))),
-                    examples_features_scaled)
-                    features_scaled = features_scaled.permute([1,0,2,3])
-                    combined = torch.cat((combined,features_scaled),dim=1)
+            combined = convolve_examples_over_img(image_features, examples_features, h, w)
+            for scale in exemplar_scales: # cvlab: computing features for scales 0.9 and 1.1
+                h1 = max(math.ceil(h * scale), 1) # cvlab: use original size if scaled size is too small
+                w1 = max(math.ceil(w * scale), 1)
+                examples_features_scaled = F.interpolate(examples_features, size = (h1, w1), mode = "bilinear")
+                features_scaled          = convolve_examples_over_img(image_features, examples_features_scaled, h1, w1)
+                combined                 = torch.cat((combined, features_scaled),dim=1)
             if cnter == 0:
                 Combined = 1.0 * combined
             else:
