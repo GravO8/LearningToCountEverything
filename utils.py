@@ -181,14 +181,12 @@ def extract_features(feature_model, image, boxes, feat_map_keys = ["map3", "map4
                     examples_features = features.clone()
                 else:
                     examples_features = torch.cat((examples_features, features),dim=0)
-            """
-            Convolving example features over image features
-            """
-            h, w = examples_features.shape[2], examples_features.shape[3]
-            features =    F.conv2d(
-                    F.pad(image_features, ((int(w/2)), int((w-1)/2), int(h/2), int((h-1)/2))),
-                    examples_features
-                )
+            # print(examples_features.shape)
+            h, w     = examples_features.shape[2], examples_features.shape[3]
+            features = F.conv2d(
+                    F.pad(image_features, 
+                         ((int(w/2)), int((w-1)/2), int(h/2), int((h-1)/2))),
+                    examples_features) # cvlab: Convolving example features over image features
             combined = features.permute([1,0,2,3])
             # cvlab: computing features for scales 0.9 and 1.1 
             for scale in exemplar_scales:
